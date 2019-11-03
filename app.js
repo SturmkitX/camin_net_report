@@ -1,42 +1,59 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const app = express();
 const arp = require('node-arp');
+const AWS = require('aws-sdk');
 
-app.use(express.static('public'));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: false }));
-
-app.post('/api', (req, res) => {
-    console.log(req.body);
-    res.status(200).send('OK');
-});
-
-app.post('/', (req, res) => {
-    console.log(req.body);
-    console.log(req.params);
-    res.redirect('/success.html');
-
+exports.handler = async event => {
     let data = {
-        name: req.body.nameField,
-        room: Number.parseInt(req.body.roomField),
-        description: req.body.contentField,
-        ip: req.ip
+        name: event.body.name,
+        room: event.body.room,
+        description: event.body.description,
+        ip: event.requestContext.identity.sourceIp,
+        mac: null
     };
 
-    // if (req.ip.startsWith('172.24.')) {
-        arp.getMAC(req.ip, (err, mac) => {
-            if (err) {
-                console.error(err);
-            } else {
-                data.mac = mac;
-                console.log(data);
-            }
-        });
-    // } else {
-    //     console.log(data);
-    // }
-    
-});
+    arp.getMAC(event.requestContext.identity.sourceIp, (err, mac) => {
+        if (err) {
+            console.error(err);
+        } else {
+            data.mac = mac;
+            console.log(data);
 
-app.listen(3000, '0.0.0.0', () => console.log('Successfully started server!'));
+            const dynamo = new AWS.DynamoDB();
+            const params = {
+                Item: {
+                    'id': {
+                        N: new Date().getTime()
+                    },
+                    'room': {
+                        S: event.body.room || 'Unspecified'
+                    },
+                    'name': {
+                        S: event.body.name || 'Unspecified'
+                    },
+                    'description': {
+                        S: event.body.description || 'Unspecified'
+                    },
+                    'ip': {
+                        S: event.requestContext.identity.sourceIp
+                    },
+                    'mac': {
+                        S: mac
+                    }
+                },
+                TableName: 'net-report-table'
+            };
+
+            dynamo.putItem(params, (err, data) => {
+                if (err) {
+                    console.error(err, err.stack);
+                } else {
+                    console.log(data);
+                }
+            });
+        }
+    });
+
+    return {
+        statusCode: 200,
+        body: 'OK'
+    }
+};
